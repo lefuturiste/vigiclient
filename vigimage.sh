@@ -70,10 +70,16 @@ function get_image()
     unzip ${RASPBIAN_ZIP} -d ${DOWNLOAD_DIR}
 }
 
-
+#
+# mount the second partition of the raspbian image then
+# mount the first partition in /boot
+# mount bind /sys /proc
+#
 function mount_image()
 {
-    RASPBIAN_IMG=$(ls ${DOWNLOAD_DIR}/*.img)
+    if [ "${RASPBIAN_IMG}" == "" ] ; then
+        RASPBIAN_IMG=$(ls ${DOWNLOAD_DIR}/*.img)
+    fi
 
     if [ "${RASPBIAN_IMG}" != "" ] ; then
         BOOT_PARTITION=$(kpartx -asv ${RASPBIAN_IMG} | grep "loop[0-9]p1" | sed -e 's/.*\(loop[0-9]p1\).*/\1/')
@@ -160,9 +166,9 @@ for i in $@ ; do
         exit 0
     ;;
     "--create")
-        if [ "$2" != "" ] ; then
-            RASPBIAN_IMG="$2"
-        else
+        RASPBIAN_IMG=${2:-}
+
+        if [ "${RASPBIAN_IMG}" == "" ] ; then
             get_image
         fi
         mount_image
