@@ -146,7 +146,7 @@ check_arch
 
 function help()
 {
-    echo "$0 --create [from_img]"
+    echo "$0 [--no-delete] --create [from_img]"
     exit 0
 }
 
