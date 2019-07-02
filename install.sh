@@ -35,7 +35,7 @@ ln -s $(which ffmpeg || echo ffmpegnotfound) processdiffaudio
 
 wget $BASEURL/package.json
 #npm install
-raspi-config nonint do_camera 1
-raspi-config nonint do_spi 1
+#raspi-config nonint do_camera 1
+#raspi-config nonint do_spi 1
 
 systemctl enable vigiclient
