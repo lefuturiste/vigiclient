@@ -33,7 +33,7 @@ then
  cd $BASEDIR
 
  rm -rf node_modules.old
- mv node_modules node_modules.old
+ [ -d node_modules ] && mv node_modules node_modules.old
 
  npm install > npm.log 2>&1 && {
   rm -rf node_modules.old
