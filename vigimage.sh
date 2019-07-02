@@ -7,15 +7,15 @@
 set -e
 set -u
 
-
+# archives
 # http://downloads.raspberrypi.org/raspbian/images/
+# http://downloads.raspberrypi.org/raspbian_lite/images/
 
 RASPBIAN_LATEST="https://downloads.raspberrypi.org/raspbian_lite_latest"
-RASPBIAN_STRETCH=http://downloads.raspberrypi.org/raspbian/images/raspbian-2019-04-09/2019-04-08-raspbian-stretch.zip
-
+RASPBIAN_LITE_STRETCH="http://downloads.raspberrypi.org/raspbian_lite/images/raspbian_lite-2019-04-09/2019-04-08-raspbian-stretch-lite.zip"
 
 DOWNLOAD_DIR="/tmp/raspbian"
-RASPBIAN_ZIP=${DOWNLOAD_DIR}/raspbian_lite_latest.zip
+RASPBIAN_ZIP=${DOWNLOAD_DIR}/raspbian.zip
 RASPBIAN_IMG=
 BOOT_PARTITION=
 ROOT_PARTITION=
@@ -66,7 +66,7 @@ function install_tools()
 function get_image()
 {
     mkdir -p ${DOWNLOAD_DIR}
-    wget  -O ${RASPBIAN_ZIP} ${RASPBIAN_LATEST} -N
+    wget  -O ${RASPBIAN_ZIP} ${RASPBIAN_LITE_STRETCH} -N
     unzip ${RASPBIAN_ZIP} -d ${DOWNLOAD_DIR}
 }
 
@@ -132,6 +132,8 @@ function update_image()
         cp install.sh ${ROOT_DIR}/tmp
         chroot "${ROOT_DIR}" /tmp/install.sh
         rm -rf ${ROOT_DIR}/var/cache/apt
+        # hack to force vigiupdate
+        rm -rf ${ROOT_DIR}/usr/local/vigiclient/package.json
     fi
 }
 
