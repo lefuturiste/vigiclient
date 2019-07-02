@@ -37,5 +37,10 @@ wget $BASEURL/package.json
 #npm install
 #raspi-config nonint do_camera 1
 #raspi-config nonint do_spi 1
+cat << EOF >> /boot/config.txt
+dtparam=i2c_arm=on
+start_x=0
+gpu_mem=128
+EOF
 
 systemctl enable vigiclient
