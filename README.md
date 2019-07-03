@@ -46,7 +46,7 @@ You should execute the script on an arm arch linux (only pi ?), x86_64 cross gen
 # first install vigimage dependencies
 apt install -y wget zip unzip kpartx
 # then creates the image
-./vigimage --no-delete --create
+./vigimage.sh --no-delete --create
 # check image file
 ls vigimage.zip
 
