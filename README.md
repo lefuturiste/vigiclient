@@ -37,14 +37,18 @@ vigimage.sh :
 - mounts the partitions
 - install vigiclient dependencies and configurations file (install.sh)
 - umount the partitions
-- img is ready to be copied
+- img is ready to be copied on sdcard
 
+You should execute the script on an arm arch linux (only pi ?), x86_64 cross generation may work, but with no warranties.
 
 ```shell
-# as root on a raspian pi
-# first install dependencies
+# as root on a raspbian pi
+# first install vigimage dependencies
 apt install -y wget zip unzip kpartx
 # then creates the image
 ./vigimage --no-delete --create
+# check image file
+ls vigimage.zip
+
 ```
 
