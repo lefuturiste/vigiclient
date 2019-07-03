@@ -176,7 +176,9 @@ for i in $@ ; do
         mount_image
         update_image
         umount_image
-        export_image
+
+        # zip of image disabled
+        # export_image
         shift
     ;;
     "--debug")
