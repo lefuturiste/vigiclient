@@ -39,7 +39,7 @@ wget $BASEURL/package.json
 #raspi-config nonint do_spi 1
 cat << EOF >> /boot/config.txt
 dtparam=i2c_arm=on
-start_x=0
+start_x=1
 gpu_mem=128
 EOF
 
