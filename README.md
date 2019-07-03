@@ -27,3 +27,24 @@
 - sudo reboot
 
 - Take a look at the default server: https://www.vigibot.com
+
+## Creation of a vigibot image
+
+The vigimage.sh script permits to generate a raspbian image with the vigibot client directly installed.
+
+vigimage.sh :
+- download the latest stretch image from raspberrypi.org
+- mounts the partitions
+- install vigiclient dependencies and configurations file (install.sh)
+- umount the partitions
+- img is ready to be copied
+
+
+```shell
+# as root on a raspian pi
+# first install dependencies
+apt install -y wget zip unzip kpartx
+# then creates the image
+./vigimage --no-delete --create
+```
+
