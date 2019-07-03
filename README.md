@@ -48,7 +48,7 @@ apt install -y wget zip unzip kpartx
 # then creates the image
 ./vigimage.sh --no-delete --create
 # check image file
-ls vigimage.zip
+ls -l /tmp/raspbian/*.img
 
 ```
 
