@@ -28,12 +28,16 @@ fi
 
 check package.json
 
-if [ $updated == "yes" ]
-then
- cd $BASEDIR
+cd $BASEDIR
 
+if [ $updated == "yes" -o ! -d node_modules ]
+then
  rm -rf node_modules.old
- [ -d node_modules ] && mv node_modules node_modules.old
+
+ if [ -d node_modules ]
+ then
+  mv node_modules node_modules.old
+ fi
 
  npm install > npm.log 2>&1 && {
   rm -rf node_modules.old
