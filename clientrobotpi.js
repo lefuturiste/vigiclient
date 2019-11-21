@@ -1,22 +1,23 @@
 "use strict";
 
-const CONF = require("/boot/robot.json");
+const CONF = require("/boot/robot.json"); // Configuration locale
 
 const TRAME = require("./trame.js");
 
-const PORTROBOTS = 86;
-const PORTTCPVIDEO = 8003;
+const PORTROBOTS = 86;     // Numéro de back-end, ne pas modifier
+const PORTTCPVIDEO = 8003; // Ports locaux de laison inter processus
 const PORTTCPAUDIO = 8004;
 
 const FICHIERLOG = "/var/log/vigiclient.log";
 
 const INTERFACEWIFI = "wlan0";
 const FICHIERSTATS = "/proc/net/wireless";
-const STATSRATE = 250;
+const STATSRATE = 250;     // Vitesse de refresh des stats Wi-Fi
 
 const PROCESSDIFFUSION = "/usr/local/vigiclient/processdiffusion";
 const PROCESSDIFFAUDIO = "/usr/local/vigiclient/processdiffaudio";
 
+// Chemin processus vidéo par défaut qui peut être surchargé dans la configuration locale
 const CMDDIFFUSION = [
  PROCESSDIFFUSION,
  " SOURCEVIDEO",
@@ -24,6 +25,7 @@ const CMDDIFFUSION = [
  " -w 2"
 ];
 
+// Chemin processus audio par défaut qui peut être surchargé dans la configuration locale
 const CMDDIFFAUDIO = [
  PROCESSDIFFAUDIO,
  " -loglevel fatal",
@@ -36,20 +38,20 @@ const CMDDIFFAUDIO = [
  " tcp://127.0.0.1:PORTTCPAUDIO"
 ];
 
-const FRAME0 = "$".charCodeAt();
-const FRAME1S = "S".charCodeAt();
-const FRAME1T = "T".charCodeAt();
-const FRAME1R = "R".charCodeAt();
+const FRAME0 = "$".charCodeAt();    // Premier octet de synchronisation toujours $
+const FRAME1S = "S".charCodeAt();   // Second octet de synchronisation pour une trame binaire en provenance du serveur et à destination du robot
+const FRAME1T = "T".charCodeAt();   // Second octet de synchronisation pour une trame comportant un fragment de message texte du chat (TTS)
+const FRAME1R = "R".charCodeAt();   // Second octet de synchronisation pour une trame binaire en provenance du robot et à destination du serveur
 
 const V4L2 = "/usr/bin/v4l2-ctl";
-const LATENCEFINALARME = 250;
-const LATENCEDEBUTALARME = 500;
-const BITRATEVIDEOFAIBLE = 100000;
-const TXRATE = 50;
-const BEACONRATE = 10000;
-const BOOSTVIDEOLUMINOSITE = 80;
-const BOOSTVIDEOCONTRASTE = 100;
-const CAPTURESENVEILLERATE = 60000;
+const LATENCEFINALARME = 250;       // Repasse en débit vidéo configuré si la latence retombe sous cette valeur (fonction hystérésis min)
+const LATENCEDEBUTALARME = 500;     // Surcharge le débit vidéo configuré si la latence passe au dela de cette valeur (fonction hystérésis max)
+const BITRATEVIDEOFAIBLE = 100000;  // Débit vidéo réduit (surcharge le débit configuré afin d'éviter une saturation du canal TCP montant)
+const TXRATE = 50;                  // Fréquence nominale des trames, utilisé dans le calcul prédictif de la latence ne pas modifier
+const BEACONRATE = 10000;           // Fréquence des trames retour télémétrie pendant la veille du robot
+const BOOSTVIDEOLUMINOSITE = 80;    // Surcharge la configuration vidéo avec une luminosité max à la demande de l'utilisateur (overlay de commande GPIO)
+const BOOSTVIDEOCONTRASTE = 100;    // Surcharge la configuration vidéo avec un contraste max à la demande de l'utilisateur (overlay de commande GPIO)
+const CAPTURESENVEILLERATE = 60000; // Pour la fonction webcam météo publique pendant la veille du robot, si activée
 
 const SEPARATEURNALU = new Buffer.from([0, 0, 0, 1]);
 
@@ -57,9 +59,9 @@ const CW2015ADDRESS = 0x62;
 const CW2015WAKEUP = new Buffer.from([0x0a, 0x00]);
 const MAX17043ADDRESS = 0x10;
 const BQ27441ADDRESS = 0x55;
-const GAUGERATE = 250;
+const GAUGERATE = 250;              // Vitesse de refresh des jauge batterie I2C
 
-const PCA9685FREQUENCY = 50;
+const PCA9685FREQUENCY = 50;        // PWM de type servomoteur
 
 const PIGPIO = -1;
 const L298 = -2;
@@ -85,27 +87,27 @@ const OSTIME = PROCESSTIME - OS.uptime() * 1000;
 let sockets = {};
 let serveurCourant = "";
 
-let up = false;
-let init = false;
-let initVideo = false;
-let conf;
-let hard;
-let tx;
-let rx;
-let oldCamera;
-let confVideo;
-let cmdDiffusion;
-let cmdDiffAudio;
+let up = false;         // Passe à true si le robot sort de veille
+let init = false;       // Mutex qui bloque certaines fonctions quand le robot n'a pas reçu sa conf
+let initVideo = false;  // Mutex qui bloque certaines fonctions quand le sous système de capture vidéo n'est pas initialisée
+let conf;               // Globale de configuration type télécommande du robot
+let hard;               // Globale de configuration type hardware du robot
+let tx;                 // Singleton avec les assesseurs pour lire les valeurs de la télécommande
+let rx;                 // Singleton avec les assesseurs pour écrire les valeurs de télémétrie
+let oldCamera;          // Utilisé pour exécuter du code uniquement en cas de changement de caméra dans la trame
+let confVideo;          // Comporte la configuration vidéo de la caméra courante
+let cmdDiffusion;       // Comporte la commande de diffusion vidéo (dyamiquement adaptée sur les gros robots avec ffmpeg et sans V4L2)
+let cmdDiffAudio;       // Comporte la commande de diffusion audio
 
 let lastTimestamp = Date.now();
 let latence = 0;
 let lastTrame = Date.now();
 let alarmeLatence = false;
 
-let oldOutils = [];
-let oldMoteurs = [];
-let rattrapage = [];
-let oldTxInterrupteurs;
+let oldOutils = [];     // Utilisé pour exécuter du code uniquement en cas de changement
+let oldMoteurs = [];    // Utilisé pour exécuter du code uniquement en cas de changement
+let rattrapage = [];    // Rattrapage de jeu automatique pour les consignes en position (anti hystétésis prédictif)
+let oldTxInterrupteurs; // Utilisé pour exécuter du code uniquement en cas de changement
 
 let boostVideo = false;
 let oldBoostVideo = false;
@@ -119,9 +121,7 @@ let gpioInterrupteurs = [];
 let serial;
 
 let i2c;
-let cw2015;
-let max17043;
-let bq27441;
+let gaugeType;
 let gaugeBuffer = new Buffer.alloc(256);
 
 let pca9685Driver = [];
@@ -133,6 +133,7 @@ if(typeof CONF.CMDDIFFAUDIO === "undefined")
  CONF.CMDDIFFAUDIO = CMDDIFFAUDIO;
 
 CONF.SERVEURS.forEach(function(serveur) {
+ // will connect for each server
  sockets[serveur] = IO.connect(serveur, {"connect timeout": 1000, transports: ["websocket"], path: "/" + PORTROBOTS + "/socket.io"});
 });
 
@@ -140,29 +141,23 @@ trace("Démarrage du client");
 
 i2c = I2C.openSync(1);
 
-try {
+// Try for each kind of boards
+
+try { // C'est du plug and play !
  i2c.i2cWriteSync(CW2015ADDRESS, 2, CW2015WAKEUP);
- cw2015 = true;
- max17043 = false;
- bq27441 = false;
+ gaugeType = "cw2015";
 } catch(err) {
  try {
   i2c.i2cReadSync(MAX17043ADDRESS, 6, gaugeBuffer);
-  cw2015 = false;
-  max17043 = true;
-  bq27441 = false;
+  gaugeType = "max17043";
  } catch(err) {
   try {
    i2c.i2cReadSync(BQ27441ADDRESS, 29, gaugeBuffer);
-   cw2015 = false;
-   max17043 = false;
-   bq27441 = true;
+   gaugeType = "bq27441";
   } catch(err) {
    trace("No I2C fuel gauge detected");
    i2c.closeSync();
-   cw2015 = false;
-   max17043 = false;
-   bq27441 = false;
+   gaugeType = "";
   }
  }
 }
@@ -171,6 +166,7 @@ function map(n, inMin, inMax, outMin, outMax) {
  return Math.trunc((n - inMin) * (outMax - outMin) / (inMax - inMin) + outMin);
 }
 
+/** LOG UTILS */
 function heure(date) {
  return ("0" + date.getHours()).slice(-2) + ":" +
         ("0" + date.getMinutes()).slice(-2) + ":" +
@@ -323,8 +319,9 @@ function diffAudio() {
 
 CONF.SERVEURS.forEach(function(serveur, index) {
 
- sockets[serveur].on("connect", function() {
+ sockets[serveur].on("connect", function() { // Authentification du robot, si invalide le serveur le laisse dans un sas d'attente et demande un reboot après une minute
   trace("Connecté sur " + serveur + "/" + PORTROBOTS);
+  //send wifi config
   EXEC("hostname -I").stdout.on("data", function(ipPriv) {
    EXEC("iwgetid -r || echo $?").stdout.on("data", function(ssid) {
     sockets[serveur].emit("serveurrobotlogin", {
@@ -339,14 +336,15 @@ CONF.SERVEURS.forEach(function(serveur, index) {
   });
  });
 
- if(index == 0) {
+ // CONFIGURATION INITIALISATION
+ if(index == 0) { // Ne prendre en compte que la configuration du premier serveur configuré (de toutes façons seuls les devs ont plusieurs serveurs)
   sockets[serveur].on("clientsrobotconf", function(data) {
    trace("Réception des données de configuration du robot depuis le serveur " + serveur);
 
-   conf = data.conf;
+   conf = data.conf; // Récupérer la conf
    hard = data.hard;
 
-   tx = new TRAME.Tx(conf.TX);
+   tx = new TRAME.Tx(conf.TX); // Récupérer le format de trame et instancier l'objet avec les assesseurs
    rx = new TRAME.Rx(conf.TX, conf.RX);
 
    for(let i = 0; i < conf.TX.OUTILS.length; i++) {
@@ -361,6 +359,8 @@ CONF.SERVEURS.forEach(function(serveur, index) {
 
    oldCamera = conf.COMMANDES[conf.DEFAUTCOMMANDE].CAMERA;
    confVideo = hard.CAMERAS[oldCamera];
+   boostVideo = false;
+   oldBoostVideo = false;
 
    for(let i = 0; i < hard.PCA9685ADDRESSES.length; i++) {
     pca9685Driver[i] = new PCA9685.Pca9685Driver({
@@ -457,6 +457,7 @@ CONF.SERVEURS.forEach(function(serveur, index) {
   });
  }
 
+ // On disconnect
  sockets[serveur].on("disconnect", function() {
   trace("Déconnecté de " + serveur + "/" + PORTROBOTS);
 
@@ -465,12 +466,13 @@ CONF.SERVEURS.forEach(function(serveur, index) {
 
   dodo();
  });
-
+ 
  sockets[serveur].on("connect_error", function(err) {
   //trace("Erreur de connexion au serveur " + serveur + "/" + PORTROBOTS);
  });
-
- sockets[serveur].on("clientsrobotdebout", function() {
+ 
+ // WAKEUP
+ sockets[serveur].on("clientsrobotdebout", function() { // TODO bientôt le serveur ne demandera même plus au robot de se réveiller : si on réceptionne la trame binaire alors réveil
   if(!init) {
    trace("Ce robot n'est pas initialisé");
    sockets[serveur].emit("serveurrobotdebout", false);
@@ -492,17 +494,19 @@ CONF.SERVEURS.forEach(function(serveur, index) {
 
   debout();
 
-  sockets[serveur].emit("serveurrobotdebout", true);
+  sockets[serveur].emit("serveurrobotdebout", true); // Un robot doit confirmer au serveur que sa procédure de sortie de veille est réussie
  });
 
- sockets[serveur].on("clientsrobotdodo", function() {
+ // SLEEP
+ sockets[serveur].on("clientsrobotdodo", function() { // TODO bientôt le serveur ne demandera même plus au robot de dormir : si on ne réceptionne plus de trames binaire depuis > X secondes alors mise en veille
   if(serveur != serveurCourant)
    return;
 
   dodo();
  });
 
- sockets[serveur].on("clientsrobottts", function(data) {
+ // TEXTOSPEACH
+ sockets[serveur].on("clientsrobottts", function(data) { // TODO réception d'un message texte : utiliser la trame binaire texte pour retirer cet event spécifique (comme la version client en C pour microcontrolleur du projet)
   FS.writeFile("/tmp/tts.txt", data, function(err) {
    if(err)
     trace(err);
@@ -513,7 +517,8 @@ CONF.SERVEURS.forEach(function(serveur, index) {
   });
  });
 
- sockets[serveur].on("clientsrobotexit", function() {
+ // REBOOT event
+ sockets[serveur].on("clientsrobotexit", function() { // Reboot depuis l'interface web, est aussi appelé automatiquement par le serveur une minute après un échec d'authentification
   trace("Redémarrage du robot");
   dodo();
   setTimeout(function() {
@@ -521,6 +526,7 @@ CONF.SERVEURS.forEach(function(serveur, index) {
   }, 1000);
  });
 
+ // PING SERVEUR ?
  sockets[serveur].on("echo", function(data) {
   sockets[serveur].emit("echo", {
    serveur: data,
@@ -528,7 +534,8 @@ CONF.SERVEURS.forEach(function(serveur, index) {
   });
  });
 
- sockets[serveur].on("clientsrobottx", function(data) {
+ // RECEIVE BINARY TRAME
+ sockets[serveur].on("clientsrobottx", function(data) { // Récepteur de la trame binaire
   if(serveur != serveurCourant)
    return;
 
@@ -771,7 +778,7 @@ function failSafe() {
   setMotor(i, 0);
 }
 
-setInterval(function() {
+setInterval(function() { // Calcul prédictif de latence et action sur le flux montant pour réduire la saturation de la websocket
  if(!up || !init)
   return;
 
@@ -791,7 +798,7 @@ setInterval(function() {
  }
 }, TXRATE);
 
-if(cw2015) {
+if(gaugeType == "cw2015") {
  setInterval(function() {
   if(!init)
    return;
@@ -806,7 +813,7 @@ if(cw2015) {
  }, GAUGERATE);
 }
 
-if(max17043) {
+if(gaugeType == "max17043") {
  setInterval(function() {
   if(!init)
    return;
@@ -821,7 +828,7 @@ if(max17043) {
  }, GAUGERATE);
 }
 
-if(bq27441) {
+if(gaugeType == "bq27441") {
  setInterval(function() {
   if(!init)
    return;
@@ -864,7 +871,7 @@ setInterval(function() {
  });
 }, BEACONRATE);
 
-setInterval(function() {
+setInterval(function() { // Juste pour la fonction webcam météo, prise de photos pendant la veille du robot
  if(up || !init || !initVideo || !hard.CAPTURESENVEILLE)
   return;
 
@@ -921,7 +928,8 @@ setInterval(function() {
  }
 }, CAPTURESENVEILLERATE);
 
-NET.createServer(function(socket) {
+// VIDEO FLUX
+NET.createServer(function(socket) { // Générateur du flux montant vidéo H.264
  const SPLITTER = new SPLIT(SEPARATEURNALU);
 
  trace("Le processus de diffusion vidéo H.264 est connecté sur tcp://127.0.0.1:" + PORTTCPVIDEO);
@@ -929,6 +937,7 @@ NET.createServer(function(socket) {
  SPLITTER.on("data", function(data) {
 
   if(serveurCourant) {
+   // send video data
    sockets[serveurCourant].emit("serveurrobotvideo", {
     timestamp: Date.now(),
     data: data
@@ -947,7 +956,8 @@ NET.createServer(function(socket) {
 
 }).listen(PORTTCPVIDEO);
 
-NET.createServer(function(socket) {
+//AUDIO FLUX
+NET.createServer(function(socket) { // Pour l'audio
 
  trace("Le processus de diffusion audio est connecté sur tcp://127.0.0.1:" + PORTTCPAUDIO);
 
@@ -977,6 +987,7 @@ NET.createServer(function(socket) {
 
 }).listen(PORTTCPAUDIO);
 
+// Good idea!!
 process.on("uncaughtException", function(err) {
  let i = 0;
  let erreur = err.stack.split("\n");
