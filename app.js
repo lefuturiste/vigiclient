@@ -24,3 +24,10 @@ robot.start()
 // })
 
 // vigiclient.start()
+
+
+process.on("uncaughtException", function(err) {
+    console.log(err)
+    console.log('uncaughtException, exit')
+    setTimeout(() => { process.exit(1) }, 1000)
+})

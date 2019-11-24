@@ -10,10 +10,6 @@ const PORTTCPAUDIO = 8004;
 
 const FICHIERLOG = "/var/log/vigiclient.log";
 
-const INTERFACEWIFI = "wlan0";
-const FICHIERSTATS = "/proc/net/wireless";
-const STATSRATE = 250;     // Vitesse de refresh des stats Wi-Fi
-
 const PROCESSDIFFUSION = "/usr/local/vigiclient/processdiffusion";
 const PROCESSDIFFAUDIO = "/usr/local/vigiclient/processdiffaudio";
 
@@ -48,10 +44,9 @@ const LATENCEFINALARME = 250;       // Repasse en débit vidéo configuré si la
 const LATENCEDEBUTALARME = 500;     // Surcharge le débit vidéo configuré si la latence passe au dela de cette valeur (fonction hystérésis max)
 const BITRATEVIDEOFAIBLE = 100000;  // Débit vidéo réduit (surcharge le débit configuré afin d'éviter une saturation du canal TCP montant)
 const TXRATE = 50;                  // Fréquence nominale des trames, utilisé dans le calcul prédictif de la latence ne pas modifier
-const BEACONRATE = 10000;           // Fréquence des trames retour télémétrie pendant la veille du robot
+
 const BOOSTVIDEOLUMINOSITE = 80;    // Surcharge la configuration vidéo avec une luminosité max à la demande de l'utilisateur (overlay de commande GPIO)
 const BOOSTVIDEOCONTRASTE = 100;    // Surcharge la configuration vidéo avec un contraste max à la demande de l'utilisateur (overlay de commande GPIO)
-const CAPTURESENVEILLERATE = 60000; // Pour la fonction webcam météo publique pendant la veille du robot, si activée
 
 const SEPARATEURNALU = new Buffer.from([0, 0, 0, 1]);
 
@@ -59,13 +54,7 @@ const CW2015ADDRESS = 0x62;
 const CW2015WAKEUP = new Buffer.from([0x0a, 0x00]);
 const MAX17043ADDRESS = 0x10;
 const BQ27441ADDRESS = 0x55;
-const GAUGERATE = 250;              // Vitesse de refresh des jauge batterie I2C
 
-const PCA9685FREQUENCY = 50;        // PWM de type servomoteur
-
-const PIGPIO = -1;
-const L298 = -2;
-const L9110 = -3;
 
 const OS = require("os");
 const FS = require("fs");
@@ -75,9 +64,7 @@ const RL = require("readline");
 const NET = require("net");
 const SPLIT = require("stream-split");
 const SP = require("serialport");
-const GPIO = require("pigpio").Gpio;
 const I2C = require("i2c-bus");
-const PCA9685 = require("pca9685");
 
 const VERSION = Math.trunc(FS.statSync(__filename).mtimeMs);
 const PROCESSTIME = Date.now();
@@ -106,16 +93,9 @@ let alarmeLatence = false;
 let oldOutils = [];     // Utilisé pour exécuter du code uniquement en cas de changement
 let oldMoteurs = [];    // Utilisé pour exécuter du code uniquement en cas de changement
 let rattrapage = [];    // Rattrapage de jeu automatique pour les consignes en position (anti hystétésis prédictif)
-let oldTxInterrupteurs; // Utilisé pour exécuter du code uniquement en cas de changement
 
 let boostVideo = false;
 let oldBoostVideo = false;
-
-let gpioOutils = [];
-let gpioMoteurs = [];
-let gpioMoteursA = [];
-let gpioMoteursB = [];
-let gpioInterrupteurs = [];
 
 let serial;
 
@@ -165,26 +145,8 @@ function map(n, inMin, inMax, outMin, outMax) {
     return Math.trunc((n - inMin) * (outMax - outMin) / (inMax - inMin) + outMin);
 }
 
-/** LOG UTILS */
-function heure(date) {
-    return ("0" + date.getHours()).slice(-2) + ":" +
-        ("0" + date.getMinutes()).slice(-2) + ":" +
-        ("0" + date.getSeconds()).slice(-2) + ":" +
-        ("00" + date.getMilliseconds()).slice(-3);
-}
-
 function trace(message) {
     console.log(message)
-    let trace = heure(new Date());
-
-    trace += " | " + message;
-
-    FS.appendFile(FICHIERLOG, trace + "\n", function (err) {
-    });
-
-    CONF.SERVEURS.forEach(function (serveur) {
-        sockets[serveur].emit("serveurrobottrace", message);
-    });
 }
 
 function traces(id, messages) {
@@ -193,15 +155,6 @@ function traces(id, messages) {
         tableau.pop();
     for (let i = 0; i < tableau.length; i++)
         trace(id + " | " + tableau[i]);
-}
-
-function constrain(n, nMin, nMax) {
-    if (n > nMax)
-        n = nMax;
-    else if (n < nMin)
-        n = nMin;
-
-    return n;
 }
 
 function sigterm(nom, processus, callback) {
@@ -240,11 +193,6 @@ function exec(nom, commande, callback) {
 }
 
 function debout() {
-    for (let i = 0; i < conf.TX.OUTILS.length; i++)
-        oldOutils[i]++;
-
-    for (let i = 0; i < 8; i++)
-        setGpio(i, tx.interrupteurs[0] >> i & 1 ^ hard.INTERRUPTEURS[i].INV);
 
     if (hard.CAPTURESENVEILLE) {
         sigterm("Raspistill", "raspistill", function (code) {
@@ -261,15 +209,6 @@ function debout() {
 
 function dodo() {
     serveurCourant = "";
-
-    for (let i = 0; i < hard.OUTILS.length; i++)
-        setOutil(i, 0);
-
-    for (let i = 0; i < hard.MOTEURS.length; i++)
-        setMotor(i, 0);
-
-    for (let i = 0; i < 8; i++)
-        setGpio(i, hard.INTERRUPTEURS[i].INV);
 
     sigterm("Diffusion", PROCESSDIFFUSION, function (code) {
     });
@@ -348,80 +287,11 @@ CONF.SERVEURS.forEach(function (serveur, index) {
             tx = new TRAME.Tx(conf.TX); // Récupérer le format de trame et instancier l'objet avec les assesseurs
             rx = new TRAME.Rx(conf.TX, conf.RX);
 
-            for (let i = 0; i < conf.TX.OUTILS.length; i++) {
-                oldOutils[i] = tx.outils[i];
-                rattrapage[i] = 0;
-            }
-
-            for (let i = 0; i < hard.MOTEURS.length; i++)
-                oldMoteurs[i] = 0;
-
-            oldTxInterrupteurs = conf.TX.INTERRUPTEURS[0];
 
             oldCamera = conf.COMMANDES[conf.DEFAUTCOMMANDE].CAMERA;
             confVideo = hard.CAMERAS[oldCamera];
             boostVideo = false;
             oldBoostVideo = false;
-
-            for (let i = 0; i < hard.PCA9685ADDRESSES.length; i++) {
-                pca9685Driver[i] = new PCA9685.Pca9685Driver({
-                    i2c: i2c,
-                    address: hard.PCA9685ADDRESSES[i],
-                    frequency: PCA9685FREQUENCY
-                }, function (err) {
-                    if (err)
-                        trace("Error initializing PCA9685 at address " + hard.PCA9685ADDRESSES[i]);
-                    else
-                        trace("PCA9685 initialized at address " + hard.PCA9685ADDRESSES[i]);
-                });
-            }
-
-            gpioOutils.forEach(function (gpio) {
-                gpio.mode(GPIO.INPUT);
-            });
-
-            gpioMoteurs.forEach(function (gpio) {
-                gpio.mode(GPIO.INPUT);
-            });
-
-            gpioMoteursA.forEach(function (gpio) {
-                gpio.mode(GPIO.INPUT);
-            });
-
-            gpioMoteursB.forEach(function (gpio) {
-                gpio.mode(GPIO.INPUT);
-            });
-
-            gpioInterrupteurs.forEach(function (gpio) {
-                gpio.mode(GPIO.INPUT);
-            });
-
-            gpioOutils = [];
-            gpioMoteurs = [];
-            gpioMoteursA = [];
-            gpioMoteursB = [];
-            gpioInterrupteurs = [];
-
-            for (let i = 0; i < hard.OUTILS.length; i++)
-                if (hard.OUTILS[i].PCA9685 == PIGPIO)
-                    gpioOutils[i] = new GPIO(hard.OUTILS[i].PIN, { mode: GPIO.OUTPUT });
-
-            for (let i = 0; i < hard.MOTEURS.length; i++) {
-                if (hard.MOTEURS[i].PCA9685 < 0) {
-                    if (hard.MOTEURS[i].PIN >= 0)
-                        gpioMoteurs[i] = new GPIO(hard.MOTEURS[i].PIN, { mode: GPIO.OUTPUT });
-                    if (hard.MOTEURS[i].PINA >= 0)
-                        gpioMoteursA[i] = new GPIO(hard.MOTEURS[i].PINA, { mode: GPIO.OUTPUT });
-                    if (hard.MOTEURS[i].PINB >= 0)
-                        gpioMoteursB[i] = new GPIO(hard.MOTEURS[i].PINB, { mode: GPIO.OUTPUT });
-                }
-            }
-
-            for (let i = 0; i < 8; i++) {
-                if (hard.INTERRUPTEURS[i].PCA9685 == PIGPIO)
-                    gpioInterrupteurs[i] = new GPIO(hard.INTERRUPTEURS[i].PIN, { mode: GPIO.OUTPUT });
-                setGpio(i, hard.INTERRUPTEURS[i].INV);
-            }
 
             setTimeout(function () {
                 configurationVideo(function (code) {
@@ -506,27 +376,6 @@ CONF.SERVEURS.forEach(function (serveur, index) {
         dodo();
     });
 
-    // TEXTOSPEACH
-    sockets[serveur].on("clientsrobottts", function (data) { // TODO réception d'un message texte : utiliser la trame binaire texte pour retirer cet event spécifique (comme la version client en C pour microcontrolleur du projet)
-        FS.writeFile("/tmp/tts.txt", data, function (err) {
-            if (err)
-                trace(err);
-            exec("eSpeak", "/usr/bin/espeak -v fr -f /tmp/tts.txt --stdout > /tmp/tts.wav", function (code) {
-                exec("Aplay", "/usr/bin/aplay -D plughw:" + hard.PLAYBACKDEVICE + " /tmp/tts.wav", function (code) {
-                });
-            });
-        });
-    });
-
-    // REBOOT event
-    sockets[serveur].on("clientsrobotexit", function () { // Reboot depuis l'interface web, est aussi appelé automatiquement par le serveur une minute après un échec d'authentification
-        trace("Redémarrage du robot");
-        dodo();
-        setTimeout(function () {
-            EXEC("reboot");
-        }, 1000);
-    });
-
     // PING SERVEUR ?
     sockets[serveur].on("echo", function (data) {
         sockets[serveur].emit("echo", {
@@ -545,11 +394,6 @@ CONF.SERVEURS.forEach(function (serveur, index) {
         lastTimestamp = data.boucleVideoCommande;
         latence = now - data.boucleVideoCommande;
 
-        const FRAME0 = "$".charCodeAt();
-        const FRAME1S = "S".charCodeAt();
-        const FRAME1T = "T".charCodeAt();
-        const FRAME1R = "R".charCodeAt(); 
-        const LATENCEDEBUTALARME = 500; 
         if (data.data[0] != FRAME0 ||
             data.data[1] != FRAME1S) {
             if (data.data[1] == FRAME1T) {
@@ -560,7 +404,7 @@ CONF.SERVEURS.forEach(function (serveur, index) {
             return;
         }
 
-        if (now - lastTrame < 50 / 2)
+        if (now - lastTrame < TXRATE / 2)
             return;
 
         lastTrame = now;
@@ -588,52 +432,6 @@ CONF.SERVEURS.forEach(function (serveur, index) {
                 configurationVideo(function (code) {
                 });
             oldCamera = camera;
-        }
-
-        if (tx.outils.length == hard.OUTILS.length) {
-            let outils = [];
-
-            for (let i = 0; i < hard.OUTILS.length; i++) {
-                if (tx.outils[i] == oldOutils[i])
-                    continue;
-                else if (tx.outils[i] < oldOutils[i])
-                    rattrapage[i] = -hard.OUTILS[i].RATTRAPAGE * 0x10000 / 360;
-                else if (tx.outils[i] > oldOutils[i])
-                    rattrapage[i] = hard.OUTILS[i].RATTRAPAGE * 0x10000 / 360;
-                oldOutils[i] = tx.outils[i];
-
-                outils[i] = constrain(tx.outils[i] + rattrapage[i] + hard.OUTILS[i].ANGLEOFFSET * 0x10000 / 360, (-hard.OUTILS[i].COURSE / 2 + 180) * 0x10000 / 360,
-                    (hard.OUTILS[i].COURSE / 2 + 180) * 0x10000 / 360);
-
-                let pwm = map(outils[i], (-hard.OUTILS[i].COURSE / 2 + 180) * 0x10000 / 360,
-                    (hard.OUTILS[i].COURSE / 2 + 180) * 0x10000 / 360, hard.OUTILS[i].PWMMIN, hard.OUTILS[i].PWMMAX);
-
-                setOutil(i, pwm);
-            }
-        }
-
-        let moteurs = [];
-
-        for (let i = 0; i < hard.MIXAGESMOTEURS.length; i++)
-            moteurs[i] = constrain(tx.vitesses[0] * hard.MIXAGESMOTEURS[i][0] +
-                tx.vitesses[1] * hard.MIXAGESMOTEURS[i][1] +
-                tx.vitesses[2] * hard.MIXAGESMOTEURS[i][2], -0x80, 0x80);
-
-        for (let i = 0; i < hard.MOTEURS.length; i++) {
-            if (moteurs[i] == oldMoteurs[i])
-                continue;
-            oldMoteurs[i] = moteurs[i];
-            setMotor(i, moteurs[i]);
-        }
-
-        if (tx.interrupteurs[0] != oldTxInterrupteurs) {
-            for (let i = 0; i < 8; i++) {
-                let etat = tx.interrupteurs[0] >> i & 1 ^ hard.INTERRUPTEURS[i].INV;
-                setGpio(i, etat);
-                if (i == hard.INTERRUPTEURBOOSTVIDEO)
-                    boostVideo = etat;
-            }
-            oldTxInterrupteurs = tx.interrupteurs[0]
         }
 
         if (boostVideo != oldBoostVideo) {
@@ -667,272 +465,24 @@ CONF.SERVEURS.forEach(function (serveur, index) {
 
 });
 
-function setPca9685Gpio(pcaId, pin, state) {
-    if (state)
-        pca9685Driver[pcaId].channelOn(pin);
-    else
-        pca9685Driver[pcaId].channelOff(pin);
-}
+// setInterval(function () { // Calcul prédictif de latence et action sur le flux montant pour réduire la saturation de la websocket
+//     if (!up || !init)
+//         return;
 
-function setGpio(n, etat) {
-    if (hard.INTERRUPTEURS[n].PCA9685 == PIGPIO) {
-        if (hard.INTERRUPTEURS[n].MODE == 1 && !etat || // Drain ouvert
-            hard.INTERRUPTEURS[n].MODE == 2 && etat)    // Collecteur ouvert
-            gpioInterrupteurs[n].mode(GPIO.INPUT);
-        else
-            gpioInterrupteurs[n].digitalWrite(etat);
-    } else
-        setPca9685Gpio(hard.INTERRUPTEURS[n].PCA9685, hard.INTERRUPTEURS[n].PIN, etat);
-}
+//     let latencePredictive = Math.max(latence, Date.now() - lastTimestamp);
 
-function setOutil(n, pwm) {
-    if (hard.OUTILS[n].PCA9685 == PIGPIO)
-        gpioOutils[n].servoWrite(pwm);
-    else
-        pca9685Driver[hard.OUTILS[n].PCA9685].setPulseLength(hard.OUTILS[n].PIN, pwm);
-}
-
-function computePwm(n, velocity, min, max) {
-    let pwm;
-    let pwmNeutre = (min + max) / 2;
-
-    if (velocity < 0)
-        pwm = map(velocity + hard.MOTEURS[n].NEUTREAR, -0x80 + hard.MOTEURS[n].NEUTREAR, 0, min, pwmNeutre);
-    else if (velocity > 0)
-        pwm = map(velocity + hard.MOTEURS[n].NEUTREAV, 0, 0x80 + hard.MOTEURS[n].NEUTREAV, pwmNeutre, max);
-    else
-        pwm = pwmNeutre;
-
-    return pwm;
-}
-
-function setMotor(n, velocity) {
-    switch (hard.MOTEURS[n].PCA9685) {
-        case PIGPIO:
-            gpioMoteurs[n].servoWrite(computePwm(n, velocity, hard.MOTEURS[n].PWMMIN, hard.MOTEURS[n].PWMMAX));
-            break;
-        case L298:
-            l298MotorDrive(n, computePwm(n, velocity, -255, 255));
-            break;
-        case L9110:
-            l9110MotorDrive(n, computePwm(n, velocity, -255, 255));
-            break;
-        default:
-            pca9685MotorDrive(n, computePwm(n, velocity, -100, 100));
-    }
-}
-
-function l298MotorDrive(n, velocity) {
-    let pwm;
-
-    if (velocity < 0) {
-        gpioMoteursA[n].digitalWrite(false);
-        gpioMoteursB[n].digitalWrite(true);
-        pwm = -velocity;
-    } else if (velocity > 0) {
-        gpioMoteursA[n].digitalWrite(true);
-        gpioMoteursB[n].digitalWrite(false);
-        pwm = velocity;
-    } else {
-        gpioMoteursA[n].digitalWrite(false);
-        gpioMoteursB[n].digitalWrite(false);
-        pwm = 0;
-    }
-
-    gpioMoteurs[n].pwmWrite(pwm);
-}
-
-function l9110MotorDrive(n, velocity) {
-    if (velocity < 0) {
-        gpioMoteursA[n].digitalWrite(false);
-        gpioMoteursB[n].pwmWrite(-velocity);
-    } else if (velocity > 0) {
-        gpioMoteursA[n].pwmWrite(velocity);
-        gpioMoteursB[n].digitalWrite(false);
-    } else {
-        gpioMoteursA[n].digitalWrite(false);
-        gpioMoteursB[n].digitalWrite(false);
-    }
-}
-
-function pca9685MotorDrive(n, velocity) {
-    let pcaId = hard.MOTEURS[n].PCA9685;
-    let chIn1 = hard.MOTEURS[n].PINA;
-    let chIn2 = hard.MOTEURS[n].PINB;
-    let pwm;
-
-    if (velocity < 0) {
-        pca9685Driver[pcaId].channelOff(chIn1);
-        pca9685Driver[pcaId].channelOn(chIn2);
-        pwm = -velocity / 100;
-    } else if (velocity > 0) {
-        pca9685Driver[pcaId].channelOn(chIn1);
-        pca9685Driver[pcaId].channelOff(chIn2);
-        pwm = velocity / 100;
-    } else {
-        pca9685Driver[pcaId].channelOff(chIn1);
-        pca9685Driver[pcaId].channelOff(chIn2);
-        pwm = 0;
-    }
-
-    pca9685Driver[pcaId].setDutyCycle(hard.MOTEURS[n].PIN, pwm);
-}
-
-function failSafe() {
-    trace("Arrêt des moteurs");
-    for (let i = 0; i < hard.MOTEURS.length; i++)
-        setMotor(i, 0);
-}
-
-setInterval(function () { // Calcul prédictif de latence et action sur le flux montant pour réduire la saturation de la websocket
-    if (!up || !init)
-        return;
-
-    let latencePredictive = Math.max(latence, Date.now() - lastTimestamp);
-
-    if (latencePredictive < LATENCEFINALARME && alarmeLatence) {
-        trace("Latence de " + latencePredictive + " ms, retour au débit vidéo configuré");
-        exec("v4l2-ctl", V4L2 + " -c video_bitrate=" + confVideo.BITRATE, function (code) {
-        });
-        alarmeLatence = false;
-    } else if (latencePredictive > LATENCEDEBUTALARME && !alarmeLatence) {
-        failSafe();
-        trace("Latence de " + latencePredictive + " ms, passage en débit vidéo réduit");
-        exec("v4l2-ctl", V4L2 + " -c video_bitrate=" + BITRATEVIDEOFAIBLE, function (code) {
-        });
-        alarmeLatence = true;
-    }
-}, TXRATE);
-
-if (gaugeType == "cw2015") {
-    setInterval(function () {
-        if (!init)
-            return;
-
-        i2c.i2cRead(CW2015ADDRESS, 256, gaugeBuffer, function () {
-            let microVolts = ((gaugeBuffer[247] << 8) + gaugeBuffer[248]) * 305;
-            let pour25600 = (gaugeBuffer[249] << 8) + gaugeBuffer[250];
-
-            rx.setValeur16(0, microVolts / 1000000);
-            rx.setValeur16(1, pour25600 / 256);
-        });
-    }, GAUGERATE);
-}
-
-if (gaugeType == "max17043") {
-    setInterval(function () {
-        if (!init)
-            return;
-
-        i2c.i2cRead(MAX17043ADDRESS, 7, gaugeBuffer, function () {
-            let milliVolts = ((gaugeBuffer[3] << 8) + gaugeBuffer[4]) * 5000 / 4096;
-            let pour25600 = (gaugeBuffer[5] << 8) + gaugeBuffer[6];
-
-            rx.setValeur16(0, milliVolts / 1000);
-            rx.setValeur16(1, pour25600 / 256);
-        });
-    }, GAUGERATE);
-}
-
-if (gaugeType == "bq27441") {
-    setInterval(function () {
-        if (!init)
-            return;
-
-        i2c.readWord(BQ27441ADDRESS, 0x04, function (err, milliVolts) {
-            rx.setValeur16(0, milliVolts / 1000);
-        });
-
-        i2c.readByte(BQ27441ADDRESS, 0x1c, function (err, pourcents) {
-            rx.setValeur16(1, pourcents);
-        });
-    }, GAUGERATE);
-}
-
-setInterval(function () {
-    if (!init)
-        return;
-
-    const STATS = RL.createInterface(FS.createReadStream(FICHIERSTATS));
-
-    STATS.on("line", function (ligne) {
-        ligne = ligne.split(/\s+/);
-
-        if (ligne[1] == INTERFACEWIFI + ":") {
-            rx.setValeur8(0, ligne[3]);
-            rx.setValeur8(1, ligne[4]);
-        }
-    });
-}, STATSRATE);
-
-setInterval(function () {
-    if (up || !init || hard.DEVTELEMETRIE)
-        return;
-
-    CONF.SERVEURS.forEach(function (serveur) {
-        sockets[serveur].emit("serveurrobotrx", {
-            timestamp: Date.now(),
-            data: rx.arrayBuffer
-        });
-    });
-}, BEACONRATE);
-
-setInterval(function () { // Juste pour la fonction webcam météo, prise de photos pendant la veille du robot
-    if (up || !init || !initVideo || !hard.CAPTURESENVEILLE)
-        return;
-
-    let date = new Date();
-    let overlay = date.toLocaleDateString() + " " + date.toLocaleTimeString();
-    if (hard.CAPTURESHDR)
-        overlay += " HDR " + hard.CAPTURESHDR;
-    let options = "-a 1024 -a '" + overlay + "' -rot " + confVideo.ROTATION;
-
-    if (hard.CAPTURESHDR) {
-        EXEC("raspistill -ev " + -hard.CAPTURESHDR + " " + options + " -o /tmp/1.jpg", function (err) {
-            if (err) {
-                trace("Erreur lors de la capture de la première photo");
-                return;
-            }
-            EXEC("raspistill " + options + " -o /tmp/2.jpg", function (err) {
-                if (err) {
-                    trace("Erreur lors de la capture de la deuxième photo");
-                    return;
-                }
-                EXEC("raspistill -ev " + hard.CAPTURESHDR + " " + options + " -o /tmp/3.jpg", function (err) {
-                    if (err) {
-                        trace("Erreur lors de la capture de la troisième photo");
-                        return;
-                    }
-                    EXEC("enfuse -o /tmp/out.jpg /tmp/1.jpg /tmp/2.jpg /tmp/3.jpg", function (err) {
-                        if (err)
-                            trace("Erreur lors de la fusion des photos");
-                        else {
-                            FS.readFile("/tmp/out.jpg", function (err, data) {
-                                CONF.SERVEURS.forEach(function (serveur) {
-                                    trace("Envoi d'une photo sur le serveur " + serveur);
-                                    sockets[serveur].emit("serveurrobotcapturesenveille", data);
-                                });
-                            });
-                        }
-                    });
-                });
-            });
-        });
-    } else {
-        EXEC("raspistill -q 10 " + options + " -o /tmp/out.jpg", function (err) {
-            if (err)
-                trace("Erreur lors de la capture de la photo");
-            else {
-                FS.readFile("/tmp/out.jpg", function (err, data) {
-                    CONF.SERVEURS.forEach(function (serveur) {
-                        trace("Envoi d'une photo sur le serveur " + serveur);
-                        sockets[serveur].emit("serveurrobotcapturesenveille", data);
-                    });
-                });
-            }
-        });
-    }
-}, CAPTURESENVEILLERATE);
+//     if (latencePredictive < LATENCEFINALARME && alarmeLatence) {
+//         trace("Latence de " + latencePredictive + " ms, retour au débit vidéo configuré");
+//         exec("v4l2-ctl", V4L2 + " -c video_bitrate=" + confVideo.BITRATE, function (code) {
+//         });
+//         alarmeLatence = false;
+//     } else if (latencePredictive > LATENCEDEBUTALARME && !alarmeLatence) {
+//         trace("Latence de " + latencePredictive + " ms, passage en débit vidéo réduit");
+//         exec("v4l2-ctl", V4L2 + " -c video_bitrate=" + BITRATEVIDEOFAIBLE, function (code) {
+//         });
+//         alarmeLatence = true;
+//     }
+// }, TXRATE);
 
 // VIDEO FLUX
 NET.createServer(function (socket) { // Générateur du flux montant vidéo H.264
@@ -961,37 +511,6 @@ NET.createServer(function (socket) { // Générateur du flux montant vidéo H.26
     });
 
 }).listen(PORTTCPVIDEO);
-
-//AUDIO FLUX
-// NET.createServer(function(socket) { // Pour l'audio
-
-//  trace("Le processus de diffusion audio est connecté sur tcp://127.0.0.1:" + PORTTCPAUDIO);
-
-//  let array = [];
-//  let i = 0;
-//  socket.on("data", function(data) {
-
-//   array.push(data);
-//   i++;
-
-//   if(i == 20) {
-//    if(serveurCourant) {
-//     sockets[serveurCourant].emit("serveurrobotaudio", {
-//      timestamp: Date.now(),
-//      data: Buffer.concat(array)
-//     });
-//    }
-//    array = [];
-//    i = 0;
-//   }
-
-//  })
-
-//  socket.on("end", function() {
-//   trace("Le processus de diffusion audio est déconnecté de tcp://127.0.0.1:" + PORTTCPAUDIO);
-//  });
-
-// }).listen(PORTTCPAUDIO);
 
 // Good idea!!
 process.on("uncaughtException", function (err) {
